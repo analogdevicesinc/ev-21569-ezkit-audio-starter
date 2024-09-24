@@ -1,0 +1,2171 @@
+/*
+** Default LDF for C, C++ and assembly applications targeting ADSP-21569.
+**
+** There are a number of configuration macros that may be specified as a
+** result of use of certain compiler switches or by linker flags directly.
+** The options are:
+** __ADI_LIBEH__
+**   Link against C++ libraries with exception handling enabled.
+** _ADI_THREADS
+**   Link against thread-safe variants of the run-time libraries.
+** _HEAP_DEBUG
+**   Macro defined when heap debugging is enabled, causes libheapdbg to be
+**   linked in, providing debug versions of the heap functions to be used.
+** __NORMAL_WORD_CODE__
+**   Indicates that the application is built with normal word encoding (-nwc).
+**   This LDF no longer supports linking with runtime libraries built with
+**   normal word encoding.
+** __SHORT_WORD_CODE__
+**   Indicates that the application should link against runtime libraries
+**   build with short word encoding (-swc). This is the only supported mode.
+** __LIBIO_LITE
+**   The I/O library provides support for printing hexadecimal constants
+**   using the "%a" conversion specifier, and for registering alternatives to
+**   the default device driver that is supported by the CrossCore Embedded
+**   studio simulator and EZ-KIT Lite systems.
+**   Those applications that do not require this
+**   functionality may define the macro __LIBIO_LITE which will select an
+**   alternative I/O library and lead to reduced code occupancy.
+** __LIBIO_FX
+**   Defining this macro causes use of a variant of the I/O library which
+**   contains full support for the fixed-point format specifiers, %r and %R.
+**   In contrast, the standard I/O library will print fixed-point constants
+**   with these specifiers as hexadecimal, in order to provide reduced code
+**   occupancy.
+** NO_LIBDRV
+**   Defining this macro excludes the drivers library from linking.
+** __MEMINIT__
+**   Macro defined by the linker when -meminit is used to enable runtime
+**   initialization.
+** __cplusplus
+**   Defined when linking one or more objects or libraries that are built
+**   from C++ sources. When defined C++ specific support is enabled in
+**   this LDF.
+** USE_SDRAM
+**   Makes SDRAM available as standard program and data memory.
+** USE_L2_HEAP, USE_SDRAM_HEAP
+**   Use L2/SDRAM for dynamic heap allocation rather than L1 default. Should
+**   result in a much larger heap being available but can have a significant
+**   performance impact.
+** USE_L2_STACK, USE_SDRAM_STACK
+**   Use L2/SDRAM for system stack rather than L1 default. Should allow for
+**   much larger stack but likely to have a significant performance impact.
+** STACK_SIZE, HEAP_SIZE, STACKHEAP_SIZE
+**   When all three of these macros are defined they configure the minimum
+**   sizes for the system heap and stack.
+** _ADI_SOV_DETECTION
+**   Enable stack overflow detection.
+** RESERVE_BOOTCODE_MEM
+**   Define if you do not wish the LDF to make use of the boot code workspace
+**   memory for NO_INIT qualified data.
+** ICACHE_OFF, DMCACHE_OFF, PMCACHE_OFF
+**   Define one or more of these macros when building applications without
+**   instruction, DM or PM caches enabled.
+** ICACHE_16KB (default), ICACHE_32KB, ICACHE_64KB, ICACHE_128KB
+**   Define one of these macros to select the size of the instruction cache.
+** DMCACHE_16KB (default), DMCACHE_32KB, DMCACHE_64KB, DMCACHE_128KB
+**   Define one of these macros to select the size of the DM cache.
+** PMCACHE_16KB, PMCACHE_32KB, PMCACHE_64KB, PMCACHE_128KB
+**   Define one of these macros to select the size of the PM cache.
+*/
+
+ARCHITECTURE(ADSP-21569)
+
+#if defined(USE_SDRAM_STACK) || defined(USE_SDRAM_HEAP)
+ #warning Putting stack/heap into external sdram can have a serious performance impact
+ #if !defined(USE_SDRAM)
+  #define USE_SDRAM
+ #endif
+#endif
+
+/*
+** macros for deciding whether to place stack or heap into L1,
+** checking that only a single placement is defined for both the stack
+** and heap, raising an error if multiple macros are found.
+*/
+#if defined(USE_L1DATA_STACK)
+  #if defined(USE_L2_STACK)
+    #error stack mapped to both L1DATA and L2.
+  #endif
+  #if defined(USE_SDRAM_STACK)
+    #error stack mapped to both L1DATA and SDRAM.
+  #endif
+#else
+  #if defined(USE_L2_STACK) && defined(USE_SDRAM_STACK)
+    #error stack mapped to both L2 and SDRAM.
+  #endif
+  #define USE_L1DATA_STACK (!defined(USE_L2_STACK) && !defined(USE_SDRAM_STACK))
+#endif
+
+#if defined(USE_L1DATA_HEAP)
+  #if defined(USE_L2_HEAP)
+    #error heap mapped to both L1DATA and L2.
+  #endif
+  #if defined(USE_SDRAM_HEAP)
+    #error heap mapped to both L1DATA and SDRAM.
+  #endif
+#else
+  #if defined(USE_L2_HEAP) && defined(USE_SDRAM_HEAP)
+    #error heap mapped to both L2 and SDRAM.
+  #endif
+  #define USE_L1DATA_HEAP (!defined(USE_L2_HEAP) && !defined(USE_SDRAM_HEAP))
+#endif
+
+/*
+** Minimum sizes of the stack and heap allocated. To override the
+** default size it is necessary to define all three macros.
+*/
+#if !defined(STACK_SIZE) || !defined(HEAP_SIZE) || !defined(STACKHEAP_SIZE)
+# define STACK_SIZE      8K
+# define HEAP_SIZE       8K
+# define STACKHEAP_SIZE 16K /* STACK_SIZE + HEAP_SIZE */
+#endif
+
+/*
+** Define macros for linking runtime objects and libraries with variants
+** that include workaround, exception handling, and multithreading support.
+*/
+#define RT_LIB_NAME(n) lib ## n ## .dlb
+
+#ifdef __ADI_LIBEH__
+# define RT_LIB_NAME_EH(n) RT_LIB_NAME(n ## x)
+#else
+# define RT_LIB_NAME_EH(n) RT_LIB_NAME(n)
+#endif
+
+#ifdef _ADI_THREADS
+# define RT_LIB_NAME_MT(n) RT_LIB_NAME(n ## mt)
+# define RT_LIB_NAME_EH_MT(n) RT_LIB_NAME_EH(n ## mt)
+#else
+# define RT_LIB_NAME_MT(n) RT_LIB_NAME(n)
+# define RT_LIB_NAME_EH_MT(n) RT_LIB_NAME_EH(n)
+#endif
+
+/*
+** Define a linked library list. Libraries from the command line are included
+** in COMMAND_LINE_OBJECTS.
+*/
+$LIBRARIES =
+  libcc.dlb,
+#ifdef _HEAP_DEBUG
+  RT_LIB_NAME_EH_MT(heapdbg),
+#endif
+  RT_LIB_NAME_MT(c),
+#ifdef __LIBIO_LITE
+  RT_LIB_NAME_MT(io_lite),
+#elif defined(__LIBIO_FX)
+  RT_LIB_NAME_MT(iofx),
+#else
+  RT_LIB_NAME_MT(io),
+#endif
+  RT_LIB_NAME_MT(profile),
+  RT_LIB_NAME_EH_MT(cpp),
+  libdsp.dlb,
+#if !defined(_ADI_THREADS)
+  libosal_noos.dlb,
+#endif
+  RT_LIB_NAME_MT(profile),
+  libssl.dlb,
+#if !defined(NO_LIBDRV)
+  libdrv.dlb,
+#endif
+  libldr.dlb;
+
+/* USER_CRT
+** Specifies a custom or Source Generator generated Startup Code object.
+*/
+#ifdef USER_CRT
+# define CRT_HDR USER_CRT
+#else
+# ifdef _ADI_SOV_DETECTION
+#  ifdef __cplusplus
+#   define CRT_HDR 21569_cpp_sov_hdr.doj
+#  else
+#   define CRT_HDR 21569_sov_hdr.doj
+#  endif
+# else
+#  ifdef __cplusplus
+#   define CRT_HDR 21569_cpp_hdr.doj
+#  else
+#   define CRT_HDR 21569_hdr.doj
+#  endif
+# endif
+#endif
+
+$OBJECTS = CRT_HDR, $COMMAND_LINE_OBJECTS;
+
+/*
+** List of all objects and libraries.
+*/
+$OBJS_LIBS = $OBJECTS, $LIBRARIES;
+
+/*
+** List of objects and libraries which prefer internal memory as
+** specified by prefersMem attribute.
+*/
+$OBJS_LIBS_INTERNAL = $OBJS_LIBS{prefersMem("internal")};
+
+/*
+** List of objects and libraries which don't have a preference for
+** external memory as specified by prefersMem attribute.
+*/
+$OBJS_LIBS_NOT_EXTERNAL = $OBJS_LIBS{!prefersMem("external")};
+
+/*
+** Define the name of the executable in a C character array in data memory
+** for various features.
+*/
+#if defined(_PGO_HW) || defined(_HEAP_DEBUG) || defined(_INSTRUMENTED_PROFILING)
+# define USE_EXE_NAME 1
+#endif
+
+/* Check the cache setup is one of the supported combinations. */
+#if defined(ICACHE_OFF) && defined(DMCACHE_OFF) && defined(PMCACHE_OFF)
+  /* Okay - caches all disabled. */
+#elif !defined(ICACHE_OFF) && defined(DMCACHE_OFF) && defined(PMCACHE_OFF)
+  /* Okay - instruction cache mode. */
+#elif !defined(ICACHE_OFF) && !defined(DMCACHE_OFF) && !defined(PMCACHE_OFF)
+  /* Okay - data cache mode (both data and instruction caches enabled). */
+#else
+  #warning \
+    Caches enabled in a unsupported mode. Refer to "L1 Cache Controller" in the "SHARC+ Core Programming Reference" for further information.
+#endif
+
+/* Set the cache sizes to 16KB when caches are not off but the size
+** is not explicitly set. Also checks selected sizes are valid.
+*/
+#if !defined(ICACHE_OFF)
+  #if !defined(ICACHE_16KB) && !defined(ICACHE_32KB) && \
+      !defined(ICACHE_64KB) && !defined(ICACHE_128KB)
+    #define ICACHE_16KB
+  #endif
+  /* Clip I cache size for available memory in block 3. */
+  #if defined(ICACHE_128KB)
+    #define BLOCK3_RESERVED // the whole block is cache
+  #endif
+#else
+  /* undefine the cache size macros when ICACHE_OFF is defined */
+  #if defined(ICACHE_16KB)
+    #undef ICACHE_16KB
+  #endif
+  #if defined(ICACHE_32KB)
+    #undef ICACHE_32KB
+  #endif
+  #if defined(ICACHE_64KB)
+    #undef ICACHE_64KB
+  #endif
+  #if defined(ICACHE_128KB)
+    #undef ICACHE_128KB
+  #endif
+#endif
+
+#if !defined(DMCACHE_OFF)
+  #if !defined(DMCACHE_16KB) && !defined(DMCACHE_32KB) && \
+      !defined(DMCACHE_64KB) && !defined(DMCACHE_128KB)
+    #define DMCACHE_16KB
+  #endif
+#else
+  /* undefine the cache size macros when DMCACHE_OFF is defined */
+  #if defined(DMCACHE_16KB)
+    #undef DMCACHE_16KB
+  #endif
+  #if defined(DMCACHE_32KB)
+    #undef DMCACHE_32KB
+  #endif
+  #if defined(DMCACHE_64KB)
+    #undef DMCACHE_64KB
+  #endif
+  #if defined(DMCACHE_128KB)
+    #undef DMCACHE_128KB
+  #endif
+#endif
+
+#if !defined(PMCACHE_OFF)
+  #if !defined(PMCACHE_16KB) && !defined(PMCACHE_32KB) && \
+      !defined(PMCACHE_64KB) && !defined(PMCACHE_128KB)
+    #define PMCACHE_16KB
+  #endif
+  /* Clip PM cache size for available memory in block 2. */
+  #if defined(PMCACHE_128KB)
+    #define BLOCK2_RESERVED // the whole block is cache
+  #endif
+#else
+  /* undefine the cache size macros when PMCACHE_OFF is defined */
+  #if defined(PMCACHE_16KB)
+    #undef PMCACHE_16KB
+  #endif
+  #if defined(PMCACHE_32KB)
+    #undef PMCACHE_32KB
+  #endif
+  #if defined(PMCACHE_64KB)
+    #undef PMCACHE_64KB
+  #endif
+  #if defined(PMCACHE_128KB)
+    #undef PMCACHE_128KB
+  #endif
+#endif
+
+MEMORY
+{
+  // The ADSP-2156x SHARC+ cores have 5 Mbit L1 RAM split over four blocks.
+
+  // This LDF defines memory sections only in byte format. It is no longer
+  // necessary to partition memory for different widths and different
+  // input types.
+
+  // The output sections that populate the memory are defined to use
+  // one of the following qualifiers:
+
+  //    BW     - byte sections
+  //    PM     - PM data/ISA code
+  //    DM     - DM data
+  //    SW     - VISA code
+  //    DATA64 - long word data
+
+  // The linker filters the inputs for each output section to match
+  // these output section qualfiers. Each output section uses the same
+  // byte memory sections which the linker packs correctly for each
+  // qualifier.
+  // Notes:
+  // 1) The interrupt Vector Table (IVT) code is placed in internal memory
+  //    by default and has to use ISA (NW, 48 bit) instructions.
+
+
+  // ----------------------- L1-Block 0 RAM (1.5 MBit) -------------------------
+  mem_iv_code      { TYPE(PM RAM) START(0x00090000) END(0x000900a7) WIDTH(48) }
+#ifdef __MEMINIT__
+  seg_init         { TYPE(PM RAM) START(0x000900a8) END(0x000905ff) WIDTH(48) }
+  mem_block0_bw    { TYPE(BW RAM) START(0x00242400) END(0x0026ffff) WIDTH(8)  }
+#else
+  mem_block0_bw    { TYPE(BW RAM) START(0x002403f0) END(0x026E9FF) WIDTH(8)  }
+  mem_block0_library_fft_dm_data   { TYPE(BW RAM) START(0x026EA00) END(0x0026ffff) WIDTH(8) }  //0.042Mbits //handled as poniter
+#endif // __MEMINIT__
+
+  // ----------------------- L1-Block 1 RAM (1.5 MBit) -------------------------
+  // The data cache attached to block 1 caches all the external memory access
+  // requests for the DM bus. The size of the cache can be adjusted with a
+  // corresponding reduction of the available non-cache L1 space.
+
+#if !defined(BLOCK1_RESERVED)
+  mem_block1_bw    { TYPE(BW RAM) WIDTH(8) START(0x002c0000)
+#if   defined(DMCACHE_16KB)
+                                                             END(0x002ebfff)
+#elif defined(DMCACHE_32KB)
+                                                             END(0x002e7fff)
+#elif defined(DMCACHE_64KB)
+                                                             END(0x002dffff)
+#elif defined(DMCACHE_128KB)
+                                                             END(0x002cffff)
+#else
+                                                             END(0x002effff)
+#endif
+                   }
+#endif
+
+  // ----------------------- L1-Block 2 RAM (1 MBit) ---------------------------
+  // The data cache attached to block 2 caches all the external memory access
+  // requests for the PM bus. If the size of the cache is 128KB, the whole
+  // of block 2 is cache and BLOCK2_RESERVED will be defined.
+
+#if !defined(BLOCK2_RESERVED)
+  mem_block2_library_fft_pm_data   { TYPE(BW RAM) START(0x00300000) END(0x00301819) WIDTH(8) }
+  mem_block2_bw    { TYPE(BW RAM) WIDTH(8) START(0x00301820)
+#if   defined(PMCACHE_16KB)
+                                                             END(0x0031bfff)
+#elif defined(PMCACHE_32KB)
+                                                             END(0x00317fff)
+#elif defined(PMCACHE_64KB)
+                                                             END(0x0030ffff)
+#else
+                                                             END(0x0031ffff)
+#endif
+                   }
+#endif
+
+  // ----------------------- L1-Block 3 RAM (1 MBit) ---------------------------
+  // The instruction cache is attached to block 3.  If the size of the cache
+  // is 128KB, the whole of block 3 is cache and BLOCK3_RESERVED will be
+  // defined.
+
+#if !defined(BLOCK3_RESERVED)
+  mem_block3_bw    { TYPE(BW RAM) WIDTH(8) START(0x00380000)
+#if   defined(ICACHE_16KB)
+                                                             END(0x0039bfff)
+#elif defined(ICACHE_32KB)
+                                                             END(0x00397fff)
+#elif defined(ICACHE_64KB)
+                                                             END(0x0038ffff)
+#else
+                                                             END(0x0039ffff)
+#endif
+                   }
+#endif
+
+  // ----------------------- L2-RAM (8 MBit) -----------------------------------
+  // The 8Mb/1MB L2 SRAM memory has 8 contiguous 128 KB banks.
+  //
+  // Notes:
+  // 1. The boot code claims the last 8KB of L2 SRAM, as working space.
+  //    This memory is not bootable, but can be used by the application once
+  //    booting is complete (NO_INIT in CCES). Note that if the application
+  //    makes use of this space and then calls the Boot Code APIs, the
+  //    space may be corrupted.
+  // 2. All memory except the 16KB before the boot code claimed L2 SRAM
+  //    is cached.
+
+  mem_L2_bw        { TYPE(BW RAM) START(0x20000000) END(0x200f9fff) WIDTH(8)  }
+  mem_L2UC_bw      { TYPE(BW RAM) START(0x200fa000) END(0x200fdfff) WIDTH(8)  }
+  mem_L2BC_bw      { TYPE(BW RAM) START(0x200fe000) END(0x200fffff) WIDTH(8)  }
+
+  #define MY_L2_UNCACHED_MEM mem_L2UC_bw
+  #define MY_L2_CACHED_MEM   mem_L2_bw
+
+  #if !defined(RESERVE_BOOTCODE_MEM)
+    #define MY_L2_CACHED_NOINIT_MEM mem_L2BC_bw
+  #endif
+
+  // ----------------------- L3 ------------------------------------------------
+  // DMC0 DDR3 SDRAM memory.
+  //
+  // Notes
+  //  1. Code execution addresses are restricted for SHARC cores so
+  //     the memory allocated cannot be increased or moved.
+  //  2. All L3 will be considered cached.
+  //  3. MY_SDRAM_DATA1_MEM is defined to be the smaller L3 data section and
+  //     MY_SDRAM_DATA2_MEM is the larger one.
+  //  4. The reason for splitting the SDRAM into segments is that the SW
+  //     alias doesn't start at the bottom of the DMC address range and the
+  //     linker doesn't support trying to allocate from the parts of a larger
+  //     BW segment that might include a smaller SW alias range.
+  //  5. The stack in SDRAM does not use memory in byte range 0xA0000000 through
+  //     to 0xBFFFFFFF as these addresses cannot be converted to word-addresses.
+
+  // ----------------------- 1GB DMC0(DDR-A) -----------------------------------
+  // 1GB DMC0 DDR3 SDRAM memory is partitioned as follows:
+  //   DDR-A segment 1 :   6MB  NW code or data
+  //                       4MB  data
+  //   DDR-A segment 2 :   6MB  VISA code or data
+  //                     496MB  data
+  //   DDR-A segment 3 : 512MB  BW only data
+
+  mem_DMC0_SDRAM_A1 { TYPE(BW RAM) START(0x80000000) END(0x809fffff) WIDTH(8) }
+  mem_DMC0_SDRAM_A2 { TYPE(BW RAM) START(0x80a00000) END(0x9fffffff) WIDTH(8) }
+  mem_DMC0_SDRAM_A3 { TYPE(BW RAM) START(0xa0000000) END(0xbfffffff) WIDTH(8) }
+
+  #define MY_SDRAM_NWCODE_MEM mem_DMC0_SDRAM_A1
+  #define MY_SDRAM_SWCODE_MEM mem_DMC0_SDRAM_A2
+  #define MY_SDRAM_DATA1_MEM  mem_DMC0_SDRAM_A1
+  #define MY_SDRAM_DATA2_MEM  mem_DMC0_SDRAM_A2
+  #define MY_SDRAM_BWONLY_MEM mem_DMC0_SDRAM_A3
+
+  #if defined(USE_SDRAM_STACK) || defined(USE_SDRAM_HEAP)
+    #define SDRAM_STACK_HEAP_BLOCK MY_SDRAM_DATA2_MEM
+  #endif
+
+} // MEMORY
+
+PROCESSOR 2156x_CORE0_SHARC0
+{
+  LINK_AGAINST( $COMMAND_LINE_LINK_AGAINST )
+  OUTPUT( $COMMAND_LINE_OUTPUT_FILE )
+#ifdef __cplusplus
+  KEEP( ___ctor_NULL_marker,__ctor_NULL_marker. )
+#endif
+  ENTRY(___lib_start)
+
+  SECTIONS
+  {
+    //
+    // Start Dolby library sections.  SDRAM required.
+    //
+
+    dxe_sdram_cpp_ctors_bw BW
+    {
+      // C++ global constructors list for byte-addressed code.
+      INPUT_SECTION_ALIGN(4)
+      FORCE_CONTIGUITY
+      _ctors. = .;    // _ctors. points to the start of the section
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdm) )
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdml seg_ctdml_bw) )
+    } > MY_SDRAM_DATA1_MEM
+
+    Kernel_Code_SW SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Decoder_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Kernel_Code_L1 ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Init_Struct_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Kernal_Data_DM ) )
+    } > mem_block0_bw
+
+    Seg_kernel_Data_internal BW
+    {
+       INPUT_SECTION_ALIGN(4)
+       INPUT_SECTIONS( $OBJS_LIBS ( Seg_Lib_Data_L1))
+    } > mem_block2_bw
+
+    Library_L1_Code SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Udc_exec_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_OAR_Process_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Omg_Process_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Jocd_api_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Jocdeclib_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Dvlim_Process_Code ) )
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Udc_utl_Code ) )
+    } > mem_block3_bw
+
+    Dolby_L2_list_BW BW
+    {
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS (Seg_Lib_Data_L2 ))
+      INPUT_SECTIONS( $OBJS_LIBS (Seg_DDP_Data_L2 ))
+    } > mem_L2_bw
+
+    Seg_Dolby_Kernel_Code SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Kernal_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_OARI_Kernel_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( OARI_LIBRARIES_CODE_SDRAM ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_DDP_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_OAR_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( OARI_LIBRARIES_CODE_SDRAM ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Intrinsics_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Intrinsics_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Cfftf_Code_L3 ))
+      INPUT_SECTIONS( $OBJS_LIBS( Seg_Intrinsics_Code_L3 ))
+    } > MY_SDRAM_SWCODE_MEM
+
+    Seg_OAR_Library_Data BW
+    {
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS( OARI_LIBRARIES_DATA_SDRAM_BW  ) )
+    } > MY_SDRAM_BWONLY_MEM
+
+    Kernel_Data_BW BW
+    {
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_Kernal_Data) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_DDP_Kernel_Data_L3 ) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_DDP_Data_L3) )
+      INPUT_SECTIONS( $OBJS_LIBS(OAR_KERNEL_DATA_SDRAM_BW) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_OAR_Data_L3) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_Kernel_Data_L3) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_Ext_Str_BW) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_Dolby_Library_Data_L3) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_Intrinsics_Data_L3) )
+      INPUT_SECTIONS( $OBJS_LIBS(Seg_DCX_Kernel_Buf) )
+    } > MY_SDRAM_DATA2_MEM
+
+    Intrinsics_DM_Data DM
+    {
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS ( Seg_Intrinsics_DM_Data_L3))
+    } > mem_DMC0_SDRAM_A2
+
+#if 1
+    ___FFT_dm_Start = MEMORY_START(mem_block0_library_fft_dm_data);
+    ___FFT_pm_Start = MEMORY_START(mem_block2_library_fft_pm_data);
+#endif
+
+    //
+    // End Dolby library sections.  SDRAM required.
+    //
+
+
+    // ------------------------------------------------------------------
+    // Block 0 is primarily used for the interrupt vectors code, stack,
+    // heap and DM data.
+    // If the entire block3 is reserved for cache it also includes priority
+    // code sections.
+
+#ifdef __MEMINIT__
+    // The meminit utility ignores output section seg_rth.
+    seg_rth PM
+#else
+    dxe_iv_code PM
+#endif
+    {
+      // Interrupt vector code (4 NW instructions per interrupt)
+      INPUT_SECTIONS( CRT_HDR(iv_code) )
+    } > mem_iv_code
+
+    // Meminit data.
+#if defined(__MEMINIT__)
+    seg_init PM
+    {
+      // Contains compressed data created by the memory initialization tool.
+      INPUT_SECTION_ALIGN(2)
+      ldf_seginit_space = . ;
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+    } > seg_init
+#endif
+
+    // Stack and heap initial memory reserve.
+#if USE_L1DATA_STACK || USE_L1DATA_HEAP
+    dxe_block0_stack_and_heap_reserve NO_INIT BW
+    {
+#if USE_L1DATA_STACK && USE_L1DATA_HEAP
+      RESERVE(stack_and_heap_in_block0, stack_and_heap_in_block0_length = STACKHEAP_SIZE, 8)
+#elif USE_L1DATA_HEAP
+      RESERVE(stack_and_heap_in_block0, stack_and_heap_in_block0_length = HEAP_SIZE, 8)
+#elif USE_L1DATA_STACK
+      RESERVE(stack_and_heap_in_block0, stack_and_heap_in_block0_length = STACK_SIZE, 8)
+#endif
+    } > mem_block0_bw
+#endif
+
+    // Highest priority (prio0) data and code.
+    dxe_block0_data_prio0_bw BW
+    {
+      // Highest priority byte data for block0.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0 seg_int_data) )
+    } > mem_block0_bw
+
+    dxe_block0_data_prio0 DM
+    {
+      // Highest priority data for block0.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0 seg_int_data) )
+    } > mem_block0_bw
+
+    dxe_block0_sw_code_prio0 SW
+    {
+      // Highest priority SW code for block0.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0) )
+#if defined(BLOCK3_RESERVED)
+      // The whole block3 is cache so map priority code section in block 0.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code_sw seg_int_code) )
+      #define ADI_MODULES_INPUT_SECTIONS_INSTR
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_INSTR
+#endif // defined(BLOCK3_RESERVED)
+    } > mem_block0_bw
+
+    dxe_block0_nw_code_prio0 PM
+    {
+      // Highest priority code for block0.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0) )
+#if defined(BLOCK3_RESERVED)
+      // The whole block3 is cache so map priority code section in block 0.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code) )
+      #define ADI_MODULES_INPUT_SECTIONS_INSTR
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_INSTR
+#if !defined(__MEMINIT__)
+      /* seg_init must be in L1, ref CCES-9786 */
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+#endif // !defined(__MEMINIT__)
+#endif // defined(BLOCK3_RESERVED)
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio0 NO_INIT DM
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0_noinit_data seg_int_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio0_bw NO_INIT BW
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0_noinit_data seg_int_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio0 ZERO_INIT DM
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0_bsz_data seg_int_bsz_data) )
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio0_bw ZERO_INIT BW
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block0_bsz_data seg_int_bsz_data) )
+    } > mem_block0_bw
+
+    // High priority (prio1) data, and code if necessary.
+#if defined(BLOCK3_RESERVED)
+     // The whole block3 is cache so map priority code section in block 0.
+    dxe_block0_sw_code_prio1 SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_swco seg_pmco) )
+    } > mem_block0_bw
+
+    dxe_block0_nw_code_prio1 PM
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_pmco) )
+    } > mem_block0_bw
+#endif // defined(BLOCK3_RESERVED)
+
+    dxe_block0_data_prio1 DM
+    {
+      // High priority data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_nw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATAA
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATAA
+    } > mem_block0_bw
+
+    dxe_block0_data_prio1_bw BW
+    {
+      // High priority byte data for block0.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_bw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATAA
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATAA
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio1 ZERO_INIT DM
+    {
+      // High priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_bsz_data .bss32 .bss bsz) )
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio1_bw ZERO_INIT BW
+    {
+      // High priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_bsz_data .bss8 .bss) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio1 NO_INIT DM
+    {
+      // High priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio1_bw NO_INIT BW
+    {
+      // High priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_noinit_data) )
+    } > mem_block0_bw
+
+    // Next map data that's not thought to be low priority.
+    dxe_block0_data_prio2 DM
+    {
+      // Default priority data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_nw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_nw seg_dmda) )
+#endif
+    } > mem_block0_bw
+
+    dxe_block0_data_prio2_bw BW
+    {
+      // Default priority data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_bw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_bw seg_dmda) )
+#endif
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio2 ZERO_INIT DM
+    {
+      // Default priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_bsz_data .bss32 .bss bsz) )
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio2_bw ZERO_INIT BW
+    {
+      // Default priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_bsz_data .bss8 .bss) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio2 NO_INIT DM
+    {
+      // Default priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio2_bw NO_INIT BW
+    {
+      // Default priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_data_prio3 DM
+    {
+      // Unspecified and lowest priority data for any unused memory.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_nw seg_dmda) )
+#endif
+    } > mem_block0_bw
+
+    dxe_block0_data_prio3_bw BW
+    {
+      // Unspecified and lowest priority data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_bw seg_dmda) )
+#endif
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio3 ZERO_INIT DM
+    {
+      // Unspecified and lowest priority zero init data for any unused memory.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_bsz_data .bss32 .bss) )
+    } > mem_block0_bw
+
+    dxe_block0_bsz_prio3_bw ZERO_INIT BW
+    {
+      // Unspecified and lowest priority zero init data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_bsz_data .bss8 .bss) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio3 NO_INIT DM
+    {
+      //  Unspecified and lowest priority no init data for any unused memory.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_noinit_data) )
+    } > mem_block0_bw
+
+    dxe_block0_noinit_prio3_bw NO_INIT BW
+    {
+      //  Unspecified and lowest priority no init data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_noinit_data) )
+    } > mem_block0_bw
+
+
+    // ------------------------------------------------------------------
+    // Block 1 is primarily used for the DM data and DM cache.
+
+    // Define a DM cache size symbol.
+    // The values used match the bits in the L1C0_CFG register size bits or
+    // -1 if cache is off.
+#if   defined(DMCACHE_16KB)
+    ___ldf_dmcachesize = 0;
+#elif defined(DMCACHE_32KB)
+    ___ldf_dmcachesize = 1;
+#elif defined(DMCACHE_64KB)
+    ___ldf_dmcachesize = 2;
+#elif defined(DMCACHE_128KB)
+    ___ldf_dmcachesize = 3;
+#else
+    ___ldf_dmcachesize = 0xffffffff;
+#endif
+
+#if !defined(BLOCK1_RESERVED)
+    dxe_block1_data_prio0_bw BW
+    {
+      // Highest priority byte data for block1.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1 seg_int_data) )
+    } > mem_block1_bw
+
+    dxe_block1_data_prio0 DM
+    {
+      // Highest priority data for block1.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1 seg_int_data) )
+    } > mem_block1_bw
+
+    dxe_block1_sw_code_prio0 SW
+    {
+      // Highest priority SW code for block1.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1) )
+    } > mem_block1_bw
+
+    dxe_block1_nw_code_prio0 PM
+    {
+      // Highest priority code for block1.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio0 NO_INIT DM
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1_noinit_data seg_int_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio0_bw NO_INIT BW
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1_noinit_data seg_int_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio0 ZERO_INIT DM
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1_bsz_data seg_int_bsz_data) )
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio0_bw ZERO_INIT BW
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block1_bsz_data seg_int_bsz_data) )
+    } > mem_block1_bw
+
+    dxe_block1_data_prio1 DM
+    {
+      // High priority data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_nw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATAA
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATAA
+    } > mem_block1_bw
+
+    dxe_block1_data_prio1_bw BW
+    {
+      // High priority byte data for block1.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_bw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATAA
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATAA
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio1 ZERO_INIT DM
+    {
+      // High priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_bsz_data .bss32 .bss bsz) )
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio1_bw ZERO_INIT BW
+    {
+      // High priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_bsz_data .bss8 .bss) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio1 NO_INIT DM
+    {
+      // High priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio1_bw NO_INIT BW
+    {
+      // High priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_data_prio2 DM
+    {
+      // Default priority data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_nw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_nw seg_dmda) )
+#endif
+    } > mem_block1_bw
+
+    dxe_block1_data_prio2_bw BW
+    {
+      // Default priority data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_bw seg_dmda seg_vtbl) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_dmda_bw seg_dmda) )
+#endif
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio2 ZERO_INIT DM
+    {
+      // Default priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_bsz_data .bss32 .bss bsz) )
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio2_bw ZERO_INIT BW
+    {
+      // Default priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_bsz_data .bss8 .bss) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio2 NO_INIT DM
+    {
+      // Default priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio2_bw NO_INIT BW
+    {
+      // Default priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_data_prio3 DM
+    {
+      // Unspecified and lowest priority data for any unused memory.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_nw seg_dmda) )
+#endif
+    } > mem_block1_bw
+
+    dxe_block1_data_prio3_bw BW
+    {
+      // Unspecified and lowest priority data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_dmda_bw seg_dmda) )
+#endif
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio3 ZERO_INIT DM
+    {
+      // Unspecified and lowest priority zero init data for any unused memory.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_bsz_data .bss32 .bss) )
+    } > mem_block1_bw
+
+    dxe_block1_bsz_prio3_bw ZERO_INIT BW
+    {
+      // Unspecified and lowest priority zero init data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_bsz_data .bss8 .bss) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio3 NO_INIT DM
+    {
+      //  Unspecified and lowest priority no init data for any unused memory.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_noinit_data) )
+    } > mem_block1_bw
+
+    dxe_block1_noinit_prio3_bw NO_INIT BW
+    {
+      //  Unspecified and lowest priority no init data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_noinit_data) )
+    } > mem_block1_bw
+#endif // !defined(BLOCK1_RESERVED)
+
+    // ------------------------------------------------------------------
+    // Block 2 is primarily used for the PM data and PM cache.
+
+    // Define a PM cache size symbol.
+    // The values used match the bits in the L1C0_CFG register size bits or
+    // -1 if cache is off.
+#if   defined(PMCACHE_16KB)
+    ___ldf_pmcachesize = 0;
+#elif defined(PMCACHE_32KB)
+    ___ldf_pmcachesize = 1;
+#elif defined(PMCACHE_64KB)
+    ___ldf_pmcachesize = 2;
+#elif defined(PMCACHE_128KB)
+    ___ldf_pmcachesize = 3;
+#else
+    ___ldf_pmcachesize = 0xffffffff;
+#endif
+
+#if !defined(BLOCK2_RESERVED)
+    dxe_block2_data_prio0_bw BW
+    {
+      // Highest priority byte data for block2.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2) )
+    } > mem_block2_bw
+
+    dxe_block2_data_prio0 DM
+    {
+      // Highest priority data for block 2.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2) )
+    } > mem_block2_bw
+
+    dxe_block2_sw_code_prio0 SW
+    {
+      // Highest priority SW code for block 2.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2) )
+    } > mem_block2_bw
+
+    dxe_block2_nw_code_prio0 PM
+    {
+      // Highest priority code for block 2.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2) )
+    } > mem_block2_bw
+
+    dxe_block2_noinit_prio0 NO_INIT DM
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2_noinit_data) )
+    } > mem_block2_bw
+
+    dxe_block2_noinit_prio0_bw NO_INIT BW
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2_noinit_data) )
+    } > mem_block2_bw
+
+    dxe_block2_bsz_prio0 ZERO_INIT DM
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2_bsz_data) )
+    } > mem_block2_bw
+
+    dxe_block2_bsz_prio0_bw ZERO_INIT BW
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block2_bsz_data) )
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio1 PM 32
+    {
+      // High priority pm data.
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_pmda_nw seg_pmda) )
+      #define ADI_MODULES_INPUT_SECTIONS_DATAB
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATAB
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio1_bw BW
+    {
+      // High priority data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_pmda_bw seg_pmda) )
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio2 PM 32
+    {
+      // Default priority pm data.
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_pmda_nw seg_pmda) )
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio2_bw BW
+    {
+      // Default priority pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_pmda_bw seg_pmda) )
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio3 PM 32
+    {
+      // Unspecified and lowest priority pm data for any unused memory.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > mem_block2_bw
+
+    dxe_block2_pm_data_prio3_bw BW
+    {
+      // Unspecified and lowest priority pm data for any unused memory.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda) )
+    } > mem_block2_bw
+#endif // !defined(BLOCK2_RESERVED)
+
+    // ------------------------------------------------------------------
+    // Block 3 is primarily used for code and instruction cache.
+
+    // Define an instruction cache size symbol.
+    // The values used match the bits in the L1C0_CFG register size bits or
+    // -1 if cache is off.
+#if   defined(ICACHE_16KB)
+    ___ldf_icachesize = 0;
+#elif defined(ICACHE_32KB)
+    ___ldf_icachesize = 1;
+#elif defined(ICACHE_64KB)
+    ___ldf_icachesize = 2;
+#elif defined(ICACHE_128KB)
+    ___ldf_icachesize = 3;
+#else
+    ___ldf_icachesize = 0xffffffff;
+#endif
+
+#if !defined(BLOCK3_RESERVED)
+    dxe_block3_data_prio0 DM
+    {
+      // Highest priority data for block 3.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3) )
+    } > mem_block3_bw
+
+    dxe_block3_data_prio0_bw BW
+    {
+      // Highest priority byte data for block3.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3) )
+    } > mem_block3_bw
+
+    dxe_block3_noinit_prio0 NO_INIT DM
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3_noinit_data) )
+    } > mem_block3_bw
+
+    dxe_block3_noinit_prio0_bw NO_INIT BW
+    {
+      // Highest priority uninitialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3_noinit_data) )
+    } > mem_block3_bw
+
+    dxe_block3_bsz_prio0 ZERO_INIT DM
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3_bsz_data) )
+    } > mem_block3_bw
+
+    dxe_block3_bsz_prio0_bw ZERO_INIT BW
+    {
+      // Highest priority zero initialized data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3_bsz_data) )
+    } > mem_block3_bw
+
+    // Now use the remaining block 3 memory for code sections.
+    // Starting with inputs sections required to be in internal memory.
+    dxe_block3_sw_code_prio0 SW
+    {
+      // Highest priority SW code for block 3.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3 seg_int_code_sw seg_int_code) )
+      #define ADI_MODULES_INPUT_SECTIONS_INSTR
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_INSTR
+    } > mem_block3_bw
+
+    dxe_block3_nw_code_prio0 PM
+    {
+      // Highest priority code for block 3.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l1_block3) )
+#if !defined(__MEMINIT__)
+      /* seg_init must be in L1, ref CCES-9786 */
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+#endif // !defined(__MEMINIT__)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code) )
+      #define ADI_MODULES_INPUT_SECTIONS_INSTR
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_INSTR
+    } > mem_block3_bw
+
+    // Try and use internal memory for the highest priority code.
+    // Inputs that are not prioritized can use L2 or L3.
+    dxe_block3_sw_code_prio1 SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_swco seg_pmco) )
+    } > mem_block3_bw
+
+    dxe_block3_nw_code_prio1 PM
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS_INTERNAL(seg_pmco) )
+    } > mem_block3_bw
+
+    dxe_block3_sw_code_prio2 SW
+    {
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_swco seg_pmco) )
+    } > mem_block3_bw
+
+    dxe_block3_nw_code_prio2 PM
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS_NOT_EXTERNAL(seg_pmco) )
+    } > mem_block3_bw
+
+#ifdef __MEMINIT__
+    // The meminit utility ignores output section seg_swco.
+    seg_swco SW
+#else
+    dxe_block3_sw_code_prio3 SW
+#endif
+    {
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_swco seg_pmco) )
+    } > mem_block3_bw
+
+#ifdef __MEMINIT__
+    // The meminit utility ignores output section seg_pmco.
+    seg_pmco PM
+#else
+    dxe_block3_nw_code_prio3 PM
+#endif
+    {
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmco) )
+    } > mem_block3_bw
+#endif // !defined(BLOCK3_RESERVED)
+
+    // ------------------------------------------------------------------
+    // Input any unmapped data or code to fill up any unused L1 memory
+    // available in the blocks. However, we can't put code in blocks 1 and
+    // 2 when they are used as data caches.
+
+    // try code in blocks 0-2
+    dxe_block0_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code_sw seg_int_code seg_swco seg_pmco) )
+    } > mem_block0_bw
+
+    dxe_block0_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code) )
+#if !defined(__MEMINIT__)
+      /* seg_init must be in L1, ref CCES-9786 */
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+#endif // !defined(__MEMINIT__)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmco) )
+    } > mem_block0_bw
+
+#if !defined(BLOCK1_RESERVED) && defined(DMCACHE_OFF)
+    dxe_block1_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code_sw seg_int_code seg_swco seg_pmco) )
+    } > mem_block1_bw
+
+    dxe_block1_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code) )
+#if !defined(__MEMINIT__)
+      /* seg_init must be in L1, ref CCES-9786 */
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+#endif // !defined(__MEMINIT__)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmco) )
+    } > mem_block1_bw
+#endif // !defined(BLOCK1_RESERVED) && defined(DMCACHE_OFF)
+
+#if !defined(BLOCK2_RESERVED)
+#if defined(PMCACHE_OFF)
+    dxe_block2_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code_sw seg_int_code seg_swco seg_pmco) )
+    } > mem_block2_bw
+
+    dxe_block2_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_code) )
+#if !defined(__MEMINIT__)
+      /* seg_init must be in L1, ref CCES-9786 */
+      INPUT_SECTIONS( $OBJS_LIBS(seg_init) )
+#endif // !defined(__MEMINIT__)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmco) )
+    } > mem_block2_bw
+#endif // defined(PMCACHE_OFF)
+
+    // next try non-PM data in block 2
+    dxe_block2_data DM
+    {
+      // general data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > mem_block2_bw
+
+    dxe_block2_data_bw BW
+    {
+      // General data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > mem_block2_bw
+
+    dxe_block2_bsz ZERO_INIT DM
+    {
+      // Zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_bsz_data seg_bsz_data .bss32 .bss) )
+    } > mem_block2_bw
+
+    dxe_block2_bsz_bw ZERO_INIT BW
+    {
+      // Zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_bsz_data seg_bsz_data .bss8 .bss) )
+    } > mem_block2_bw
+
+    dxe_block2_noinit NO_INIT DM
+    {
+      // No-init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_noinit_data seg_noinit_data) )
+    } > mem_block2_bw
+
+    dxe_block2_noinit_bw NO_INIT BW
+    {
+      // No-init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_noinit_data seg_noinit_data) )
+    } > mem_block2_bw
+#endif // !defined(BLOCK2_RESERVED)
+
+    // next try PM data in block 0 and block 1
+    dxe_block0_pm_data PM 32
+    {
+      // PM data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > mem_block0_bw
+
+    dxe_block0_pm_data_bw BW
+    {
+      // PM data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_bw seg_pmda) )
+    } > mem_block0_bw
+
+#if !defined(BLOCK1_RESERVED)
+    dxe_block1_pm_data PM 32
+    {
+      // PM data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > mem_block1_bw
+
+    dxe_block1_pm_data_bw BW
+    {
+      // PM data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_bw seg_pmda) )
+    } > mem_block1_bw
+#endif // !defined(BLOCK1_RESERVED)
+
+    // lastly try DM and PM data in block 3
+#if !defined(BLOCK3_RESERVED)
+    dxe_block3_data DM
+    {
+      // General data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_nw seg_dmda ) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > mem_block3_bw
+
+    dxe_block3_data_bw BW
+    {
+      // General data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_data seg_dmda_bw seg_dmda ) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > mem_block3_bw
+
+    dxe_block3_pm_data PM 32
+    {
+      // PM data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > mem_block3_bw
+
+    dxe_block3_pm_data_bw BW
+    {
+      // PM data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_bw seg_pmda) )
+    } > mem_block3_bw
+
+    dxe_block3_bsz ZERO_INIT DM
+    {
+      // Zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_bsz_data seg_bsz_data .bss32 .bss) )
+    } > mem_block3_bw
+
+    dxe_block3_bsz_bw ZERO_INIT BW
+    {
+      // Zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_bsz_data seg_bsz_data .bss8 .bss) )
+    } > mem_block3_bw
+
+    dxe_block3_noinit NO_INIT DM
+    {
+      // No-init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_noinit_data seg_noinit_data) )
+    } > mem_block3_bw
+
+    dxe_block3_noinit_bw NO_INIT BW
+    {
+      // No-init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_int_noinit_data seg_noinit_data) )
+    } > mem_block3_bw
+#endif // !defined(BLOCK3_RESERVED)
+
+    // ------------------------------------------------------------------
+    // L2 - core memory
+
+#if defined(MY_L2_CACHED_NOINIT_MEM)
+    // First do inputs for noinit data to the boot code working area memory
+    // if we are using that memory. Define RESERVE_BOOTCODE_MEM to have this
+    // memory reserved and remain unused.
+
+    dxe_l2bootcode_noinit NO_INIT DM
+    {
+      //  L2 no init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_noinit_data) )
+    } > MY_L2_CACHED_NOINIT_MEM
+
+    dxe_l2bootcode_noinit_bw NO_INIT BW
+    {
+      //  L2 no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_noinit_data) )
+    } > MY_L2_CACHED_NOINIT_MEM
+#endif // MY_L2_CACHED_NOINIT_MEM
+
+#if defined(MY_L2_CACHED_MEM)
+
+#if !defined(USE_SDRAM) && defined(__cplusplus)
+    // Map the FORCE_CONTIGUITY data first.
+
+    dxe_l2_cpp_ctors_nw DM
+    {
+      // C++ global constructors list for word-addressed code.
+      FORCE_CONTIGUITY
+      __ctors = .;    // __ctors points to the start of the section
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdm) )
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdml) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_cpp_eh_gdt_nw DM
+    {
+      // C++ exceptions data table.
+      FORCE_CONTIGUITY
+      INPUT_SECTIONS( $OBJS_LIBS(.gdt32 .gdt) )
+      INPUT_SECTIONS( $OBJS_LIBS(.gdtl32 .gdtl) )  // null byte terminator
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_cpp_eh_gdt_bw BW
+    {
+      // C++ exceptions data table.
+      INPUT_SECTION_ALIGN(4)
+      FORCE_CONTIGUITY
+      INPUT_SECTIONS( $OBJS_LIBS(.gdt) )
+      INPUT_SECTIONS( $OBJS_LIBS(.gdtl) )          // null byte terminator
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_cpp_ctors_bw BW
+    {
+      // C++ global constructors list for byte-addressed code.
+      INPUT_SECTION_ALIGN(4)
+      FORCE_CONTIGUITY
+      _ctors. = .;    // _ctors. points to the start of the section
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdm) )
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdml seg_ctdml_bw) )
+    } > MY_L2_CACHED_MEM
+#endif
+
+#if defined(USE_L2_STACK) || defined(USE_L2_HEAP)
+    dxe_l2_stack_and_heap_reserve NO_INIT BW
+    {
+#if defined(USE_L2_STACK) && defined(USE_L2_HEAP)
+      RESERVE(stack_and_heap_in_L2, stack_and_heap_in_L2_length = STACKHEAP_SIZE, 8)
+#elif defined(USE_L2_HEAP)
+      RESERVE(stack_and_heap_in_L2, stack_and_heap_in_L2_length = HEAP_SIZE, 8)
+#elif defined(USE_L2_STACK)
+      RESERVE(stack_and_heap_in_L2, stack_and_heap_in_L2_length = STACK_SIZE, 8)
+#endif
+    } > MY_L2_CACHED_MEM
+#endif
+
+#if !defined(USE_SDRAM) && defined(USE_EXE_NAME)
+    dxe_l2_executable_name
+    {
+      INPUT_SECTION_ALIGN(4)
+      EXECUTABLE_NAME(_executable_name.)
+    } > MY_L2_CACHED_MEM
+#endif
+
+    dxe_l2_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_swco seg_swco seg_pmco) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_pmco seg_pmco) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_data DM
+    {
+      //  L2 data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_data_bw BW
+    {
+      //  L2 data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda_bw seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda_bw seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_bsz ZERO_INIT DM
+    {
+      //  L2 zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_bsz_data seg_bsz_data .bss32 .bss) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_bsz_bw ZERO_INIT BW
+    {
+      //  L2 zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_bsz_data seg_bsz_data .bss8 .bss) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_noinit NO_INIT DM
+    {
+      //  L2 no init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_l2_noinit_data_cached seg_noinit_data) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_noinit_bw NO_INIT BW
+    {
+      //  L2 no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_l2_noinit_data_cached seg_noinit_data) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_pm_data PM 32
+    {
+      // L2 pm data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > MY_L2_CACHED_MEM
+
+    dxe_l2_pm_data_bw BW
+    {
+      // L2 pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda) )
+    } > MY_L2_CACHED_MEM
+
+#else
+  #error L2 memory unused as MY_L2_CACHED_MEM isn't defined
+#endif
+
+    // ------------------------------------------------------------------
+    // L2 - uncached memory
+
+    // Define labels used by library cache support functions.
+    ___l2_uncached_start  = MEMORY_START(mem_L2UC_bw);
+    ___l2_uncached_end    = MEMORY_END  (mem_L2UC_bw);
+
+#if defined(MY_L2_UNCACHED_MEM)
+    dxe_l2_uncached DM
+    {
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_uncached seg_uncached) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2_uncached_bw BW
+    {
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_uncached seg_uncached) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_swco seg_swco seg_pmco) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_pmco seg_pmco) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_data DM
+    {
+      //  L2 data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_data_bw BW
+    {
+      //  L2 data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda_bw seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2 seg_l2_dmda_bw seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_bsz ZERO_INIT DM
+    {
+      //  L2 zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_bsz_data seg_bsz_data .bss32 .bss) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_bsz_bw ZERO_INIT BW
+    {
+      //  L2 zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_bsz_data seg_bsz_data .bss8 .bss) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_noinit NO_INIT DM
+    {
+      //  L2 no init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_l2_noinit_data_uncached seg_noinit_data) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_noinit_bw NO_INIT BW
+    {
+      //  L2 no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_l2_noinit_data seg_l2_noinit_data_uncached seg_noinit_data) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_pm_data PM 32
+    {
+      // L2 pm data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda_nw seg_pmda) )
+    } > MY_L2_UNCACHED_MEM
+
+    dxe_l2uc_pm_data_bw BW
+    {
+      // L2 pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_pmda) )
+    } > MY_L2_UNCACHED_MEM
+
+#else
+  #error L2 memory unused as MY_L2_UNCACHED_MEM isn't defined
+#endif
+
+    // ------------------------------------------------------------------
+    // SDRAM
+
+#if defined(USE_SDRAM)
+    dxe_sdram_sw_code SW
+    {
+      // VISA code.
+      INPUT_SECTION_ALIGN(2)
+      FILL(0x1)  // fill gaps in memory with NOPs
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_code seg_swco seg_pmco) )
+    } > MY_SDRAM_SWCODE_MEM
+
+    dxe_sdram_nw_code PM
+    {
+      // ISA code.
+      INPUT_SECTION_ALIGN(2)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_code seg_pmco) )
+    } > MY_SDRAM_NWCODE_MEM
+
+#if defined(__cplusplus)
+    // Map the FORCE_CONTIGUITY data first.
+
+    dxe_sdram_cpp_ctors_nw DM
+    {
+      // C++ global constructors list for word-addressed code.
+      FORCE_CONTIGUITY
+      __ctors = .;    // __ctors points to the start of the section
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdm) )
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdml) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_cpp_eh_gdt_nw DM
+    {
+      // C++ exceptions data table.
+      FORCE_CONTIGUITY
+      INPUT_SECTIONS( $OBJS_LIBS(.gdt32 .gdt) )
+      INPUT_SECTIONS( $OBJS_LIBS(.gdtl32 .gdtl) )  // null byte terminator
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_cpp_eh_gdt_bw BW
+    {
+      // C++ exceptions data table.
+      INPUT_SECTION_ALIGN(4)
+      FORCE_CONTIGUITY
+      INPUT_SECTIONS( $OBJS_LIBS(.gdt) )
+      INPUT_SECTIONS( $OBJS_LIBS(.gdtl) )  // null byte terminator
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_cpp_ctors_bw BW
+    {
+      // C++ global constructors list for byte-addressed code.
+      INPUT_SECTION_ALIGN(4)
+      FORCE_CONTIGUITY
+      _ctors. = .;    // _ctors. points to the start of the section
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdm) )
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ctdml seg_ctdml_bw) )
+    } > MY_SDRAM_DATA1_MEM
+#endif
+
+#if defined(USE_SDRAM_STACK) || defined(USE_SDRAM_HEAP)
+    dxe_sdram_stack_and_heap_reserve NO_INIT BW
+    {
+#if defined(USE_SDRAM_STACK) && defined(USE_SDRAM_HEAP)
+      RESERVE(stack_and_heap_in_sdram, stack_and_heap_in_sdram_length = STACKHEAP_SIZE, 8)
+#elif defined(USE_SDRAM_HEAP)
+      RESERVE(stack_and_heap_in_sdram, stack_and_heap_in_sdram_length = HEAP_SIZE, 8)
+#elif defined(USE_SDRAM_STACK)
+      RESERVE(stack_and_heap_in_sdram, stack_and_heap_in_sdram_length = STACK_SIZE, 8)
+#endif
+    } > SDRAM_STACK_HEAP_BLOCK
+#endif
+
+#if defined(USE_EXE_NAME)
+    dxe_sdram_executable_name
+    {
+      INPUT_SECTION_ALIGN(4)
+      EXECUTABLE_NAME(_executable_name.)
+    } > MY_SDRAM_DATA1_MEM
+#endif
+
+    dxe_sdram_data DM
+    {
+      // general data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_data_bw BW
+    {
+      // general data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_bsz ZERO_INIT DM
+    {
+      // zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_bsz_data seg_bsz_data .bss32 .bss) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_bsz_bw ZERO_INIT BW
+    {
+      // zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_bsz_data seg_bsz_data .bss8 .bss) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_noinit NO_INIT DM
+    {
+      // no init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_noinit_data seg_noinit_data) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_noinit_bw NO_INIT BW
+    {
+      // no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_noinit_data seg_noinit_data) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_pm_data PM 32
+    {
+      // pm data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ext_pmda seg_pmda_nw seg_pmda) )
+    } > MY_SDRAM_DATA1_MEM
+
+    dxe_sdram_pm_data_bw BW
+    {
+      // pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ext_pmda seg_pmda) )
+    } > MY_SDRAM_DATA1_MEM
+
+#if defined(MY_SDRAM_DATA2_MEM)
+    // Inputs for NW sections are done first as the second half
+    // of the DMC0 address range (0xA000_0000 to 0xBFFF_FFFF)
+    // can only map BW data.
+
+    dxe_sdram_data2 DM
+    {
+      // general data.
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_nw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_nw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_bsz2 ZERO_INIT DM
+    {
+      // zero init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_bsz_data seg_bsz_data .bss32 .bss) )
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_noinit2 NO_INIT DM
+    {
+      // no init data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_noinit_data seg_noinit_data) )
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_pm_data2 PM 32
+    {
+      // pm data.
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ext_pmda seg_pmda_nw seg_pmda) )
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_data2_bw BW
+    {
+      // general data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_bsz2_bw ZERO_INIT BW
+    {
+      // zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_bsz_data seg_bsz_data .bss8 .bss) )
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_noinit2_bw NO_INIT BW
+    {
+      // no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_noinit_data seg_noinit_data) )
+    } > MY_SDRAM_DATA2_MEM
+
+    dxe_sdram_pm_data2_bw BW
+    {
+      // pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ext_pmda seg_pmda) )
+    } > MY_SDRAM_DATA2_MEM
+#endif // defined(MY_SDRAM_DATA2_MEM)
+
+#if defined(MY_SDRAM_BWONLY_MEM)
+    // BW only data mappings for the second half of the DMC0 address range.
+
+    dxe_sdram_data3_bw BW
+    {
+      // general data.
+      INPUT_SECTION_ALIGN(4)
+#if defined(__cplusplus)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda seg_vtbl .rtti .cht .edt) )
+#else
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram seg_ext_data seg_dmda_bw seg_dmda) )
+#endif
+      #define ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+      #include "modules_sharc.ldf"
+      #undef ADI_MODULES_INPUT_SECTIONS_DATA_OVERFLOW
+    } > MY_SDRAM_BWONLY_MEM
+
+    dxe_sdram_bsz3_bw ZERO_INIT BW
+    {
+      // zero init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_bsz_data seg_bsz_data .bss8 .bss) )
+    } > MY_SDRAM_BWONLY_MEM
+
+    dxe_sdram_noinit3_bw NO_INIT BW
+    {
+      // no init data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_sdram_noinit_data seg_noinit_data) )
+    } > MY_SDRAM_BWONLY_MEM
+
+    dxe_sdram_pm_data3_bw BW
+    {
+      // pm data.
+      INPUT_SECTION_ALIGN(4)
+      INPUT_SECTIONS( $OBJS_LIBS(seg_ext_pmda seg_pmda) )
+    } > MY_SDRAM_BWONLY_MEM
+
+#endif // MY_SDRAM_BWONLY_MEM
+
+#endif // defined(USE_SDRAM)
+
+    // ------------------------------------------------------------------
+    // Complete the stack and heap definitions.
+
+#if defined(USE_L2_STACK) || defined(USE_L2_HEAP)
+    dxe_l2_stack_and_heap_expand NO_INIT BW
+    {
+      // Expand the stack and heap allocation to include any unmapped memory.
+      RESERVE_EXPAND(stack_and_heap_in_L2, stack_and_heap_in_L2_length, 0, 8)
+#if defined(USE_L2_STACK) && defined(USE_L2_HEAP)
+      ldf_stack_space = stack_and_heap_in_L2;
+      ldf_stack_end = (ldf_stack_space + ((stack_and_heap_in_L2_length * STACK_SIZE) / STACKHEAP_SIZE) - 4 );
+      ldf_stack_length = ldf_stack_end - ldf_stack_space;
+      ldf_heap_space = ldf_stack_end + 4;
+      ldf_heap_end = ldf_stack_space + stack_and_heap_in_L2_length;
+      ldf_heap_length = ldf_heap_end - ldf_heap_space;
+#elif defined(USE_L2_STACK)
+      ldf_stack_space = stack_and_heap_in_L2;
+      ldf_stack_end = ldf_stack_space + stack_and_heap_in_L2_length - 4;
+      ldf_stack_length = stack_and_heap_in_L2_length;
+#elif defined(USE_L2_HEAP)
+      ldf_heap_space = stack_and_heap_in_L2;
+      ldf_heap_end = ldf_heap_space + stack_and_heap_in_L2_length - 4;
+      ldf_heap_length = stack_and_heap_in_L2_length;
+#endif
+    } > MY_L2_CACHED_MEM
+#endif
+
+#if defined(USE_SDRAM_STACK) || defined(USE_SDRAM_HEAP)
+    dxe_sdram_stack_and_heap_expand NO_INIT BW
+    {
+      // Expand the stack and heap allocation to include any unmapped memory.
+      RESERVE_EXPAND(stack_and_heap_in_sdram, stack_and_heap_in_sdram_length, 0, 8)
+#if defined(USE_SDRAM_STACK) && defined(USE_SDRAM_HEAP)
+      ldf_stack_space = stack_and_heap_in_sdram;
+      ldf_stack_end = (ldf_stack_space + ((stack_and_heap_in_sdram_length * STACK_SIZE) / STACKHEAP_SIZE) - 4 );
+      ldf_stack_length = ldf_stack_end - ldf_stack_space;
+      ldf_heap_space = ldf_stack_end + 4;
+      ldf_heap_end = ldf_stack_space + stack_and_heap_in_sdram_length;
+      ldf_heap_length = ldf_heap_end - ldf_heap_space;
+#elif defined(USE_SDRAM_STACK)
+      ldf_stack_space = stack_and_heap_in_sdram;
+      ldf_stack_end = ldf_stack_space + stack_and_heap_in_sdram_length - 4;
+      ldf_stack_length = stack_and_heap_in_sdram_length;
+#elif defined(USE_SDRAM_HEAP)
+      ldf_heap_space = stack_and_heap_in_sdram;
+      ldf_heap_end = ldf_heap_space + stack_and_heap_in_sdram_length - 4;
+      ldf_heap_length = stack_and_heap_in_sdram_length;
+#endif
+    } > SDRAM_STACK_HEAP_BLOCK
+#endif
+
+#if USE_L1DATA_STACK || USE_L1DATA_HEAP
+    dxe_block0_stack_and_heap_expand NO_INIT BW
+    {
+      // Expand the stack and heap allocation to include any unmapped memory.
+      RESERVE_EXPAND(stack_and_heap_in_block0, stack_and_heap_in_block0_length, 0, 8)
+#if USE_L1DATA_STACK && USE_L1DATA_HEAP
+      ldf_stack_space = stack_and_heap_in_block0;
+      ldf_stack_end = (ldf_stack_space + ((stack_and_heap_in_block0_length * STACK_SIZE) / STACKHEAP_SIZE) - 4 );
+      ldf_stack_length = ldf_stack_end - ldf_stack_space;
+      ldf_heap_space = ldf_stack_end + 4;
+      ldf_heap_end = ldf_stack_space + stack_and_heap_in_block0_length;
+      ldf_heap_length = ldf_heap_end - ldf_heap_space;
+#elif USE_L1DATA_STACK
+      ldf_stack_space = stack_and_heap_in_block0;
+      ldf_stack_end = ldf_stack_space + stack_and_heap_in_block0_length - 4;
+      ldf_stack_length = stack_and_heap_in_block0_length;
+#elif USE_L1DATA_HEAP
+      ldf_heap_space = stack_and_heap_in_block0;
+      ldf_heap_end = ldf_heap_space + stack_and_heap_in_block0_length - 4;
+      ldf_heap_length = stack_and_heap_in_block0_length;
+#endif
+    } > mem_block0_bw
+#endif
+
+    // ------------------------------------------------------------------
+
+  } // SECTIONS
+
+} // PROCESSOR
