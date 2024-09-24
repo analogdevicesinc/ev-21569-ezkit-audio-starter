@@ -1,0 +1,4 @@
+*.dxe
+*.ldr
+linker_log*
+SHARC0
